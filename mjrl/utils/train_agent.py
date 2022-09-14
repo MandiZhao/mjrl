@@ -10,7 +10,7 @@ import pickle
 import time as timer
 import os
 import copy
-
+import wandb
 
 def _load_latest_policy_and_logs(agent, *, policy_dir, logs_dir):
     """Loads the latest policy.
@@ -59,33 +59,35 @@ def _load_latest_policy_and_logs(agent, *, policy_dir, logs_dir):
     # cannot find any saved policy
     raise RuntimeError("Log file exists, but cannot find any saved policy.")
 
-def train_agent(job_name, agent,
-                seed = 0,
-                niter = 101,
-                gamma = 0.995,
-                gae_lambda = None,
-                num_cpu = 1,
-                sample_mode = 'trajectories',
-                num_traj = 50,
-                num_samples = 50000, # has precedence, used with sample_mode = 'samples'
-                save_freq = 10,
-                evaluation_rollouts = None,
-                plot_keys = ['stoc_pol_mean'],
-                ):
-
-    np.random.seed(seed)
-    if os.path.isdir(job_name) == False:
-        os.mkdir(job_name)
-    previous_dir = os.getcwd()
-    os.chdir(job_name) # important! we are now in the directory to save data
-    if os.path.isdir('iterations') == False: os.mkdir('iterations')
-    if os.path.isdir('logs') == False and agent.save_logs == True: os.mkdir('logs')
-    best_policy = copy.deepcopy(agent.policy)
-    best_perf = -1e8
-    train_curve = best_perf*np.ones(niter)
-    mean_pol_perf = 0.0
-    e = GymEnv(agent.env.env_id)
-
+def train_agent(                                                                                                                                                                                                                                                                                                                                                                                                                  
+        job_name,                                                                                                                                                                                                                                                                                                                                                                                                                 
+        agent,                                                                                                                                                                                                                                                                                                                                                                                                                    
+        env,                                                                                                                                                                                                                                                                                                                                                                                                                      
+        env_kwargs = {},                                                                                                                                                                                                                                                                                                                                                                                                          
+        seed = 0,                                                                                                                                                                                                                                                                                                                                                                                                                 
+        niter = 101,                                                                                                                                                                                                                                                                                                                                                                                                              
+        gamma = 0.995,                                                                                                                                                                                                                                                                                                                                                                                                            
+        gae_lambda = None,                                                                                                                                                                                                                                                                                                                                                                                                        
+        num_cpu = 1,                                                                                                                                                                                                                                                                                                                                                                                                              
+        sample_mode = 'trajectories',                                                                                                                                                                                                                                                                                                                                                                                             
+        num_traj = 50,                                                                                                                                                                                                                                                                                                                                                                                                            
+        num_samples = 50000, # has precedence, used with sample_mode = 'samples'                                                                                                                                                                                                                                                                                                                                                  
+        save_freq = 10,                                                                                                                                                                                                                                                                                                                                                                                                           
+        evaluation_rollouts = None,                                                                                                                                                                                                                                                                                                                                                                                               
+        plot_keys = ['stoc_pol_mean'],                                                                                                                                                                                                                                                                                                                                                                                            
+        log_wandb = False,                                                                             
+        stop_threshold = 90,                                                                           
+        ):
+    logging.info(f"####### begin training agent, env.sample_layout: {env.env.sample_layout} #######")                                                                                                           
+    np.random.seed(seed)                                                                               
+    # if os.path.isdir(job_name) == False:
+                                                
+    best_perf = -1e8                                                                                   
+    train_curve = best_perf*np.ones(niter)                                                             
+    mean_pol_perf = 0.0                                                                                                                                                 
+    e = env
+    if not isinstance(env, GymEnv):
+        e = GymEnv(env) 
     # Load from any existing checkpoint, policy, statistics, etc.
     # Why no checkpointing.. :(
     i_start = _load_latest_policy_and_logs(agent,
@@ -93,29 +95,41 @@ def train_agent(job_name, agent,
                                            logs_dir='logs')
     if i_start:
         print("Resuming from an existing job folder ...")
-
+    early_stop = False 
     for i in range(i_start, niter):
         print("......................................................................................")
         print("ITERATION : %i " % i)
 
-        if train_curve[i-1] > best_perf:
-            best_policy = copy.deepcopy(agent.policy)
-            best_perf = train_curve[i-1]
-
+        
         N = num_traj if sample_mode == 'trajectories' else num_samples
-        args = dict(N=N, sample_mode=sample_mode, gamma=gamma, gae_lambda=gae_lambda, num_cpu=num_cpu)
+        #args = dict(N=N, sample_mode=sample_mode, gamma=gamma, gae_lambda=gae_lambda, num_cpu=num_cpu)
+        args = dict(
+            N=N, sample_mode=sample_mode, gamma=gamma, gae_lambda=gae_lambda, num_cpu=num_cpu,
+            env=e, env_kwargs=env_kwargs
+            )  
         stats = agent.train_step(**args)
         train_curve[i] = stats[0]
 
         if evaluation_rollouts is not None and evaluation_rollouts > 0:
             print("Performing evaluation rollouts ........")
             eval_paths = sample_paths(num_traj=evaluation_rollouts, policy=agent.policy, num_cpu=num_cpu,
-                                      env=e.env_id, eval_mode=True, base_seed=seed)
+                                      env=e, eval_mode=True, base_seed=seed, env_kwargs=env_kwargs)
             mean_pol_perf = np.mean([np.sum(path['rewards']) for path in eval_paths])
             if agent.save_logs:
                 agent.logger.log_kv('eval_score', mean_pol_perf)
                 try:
-                    eval_success = e.env.env.evaluate_success(eval_paths)
+                    eval_success, eval_paths = e.env.env.evaluate_success(eval_paths)
+                    if eval_success > best_perf:
+                        best_policy = copy.deepcopy(agent.policy)
+                        best_perf = eval_success
+
+                    if eval_success >= stop_threshold:
+                        early_stop = True 
+                        print('early stop at iter: ', i)
+                        best_policy = agent.policy
+                        pickle.dump(best_policy, open('iterations/best_policy.pickle', 'wb'))
+                        pickle.dump(
+                            str(timer.asctime(timer.localtime(timer.time()))), open('ready.pkl', 'wb'))
                     agent.logger.log_kv('eval_success', eval_success)
                 except:
                     pass
@@ -146,10 +160,12 @@ def train_agent(job_name, agent,
             print_data = sorted(filter(lambda v: np.asarray(v[1]).size == 1,
                                        agent.logger.get_current_log().items()))
             print(tabulate(print_data))
+        if early_stop:
+            break 
 
     # final save
     pickle.dump(best_policy, open('iterations/best_policy.pickle', 'wb'))
     if agent.save_logs:
         agent.logger.save_log('logs/')
         make_train_plots(log=agent.logger.log, keys=plot_keys, save_loc='logs/')
-    os.chdir(previous_dir)
+    # os.chdir(previous_dir)

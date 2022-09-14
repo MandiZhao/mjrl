@@ -1,4 +1,5 @@
 import logging
+import mj_envs, gym
 import numpy as np
 from mjrl.utils.gym_env import GymEnv
 from mjrl.utils import tensor_utils
@@ -30,32 +31,47 @@ def do_rollout(
     :return:
     """
 
-    # get the correct env behavior
-    if type(env) == str:
-        env = GymEnv(env)
-    elif isinstance(env, GymEnv):
-        env = env
-    elif callable(env):
-        env = env(**env_kwargs)
-    else:
-        print("Unsupported environment format")
-        raise AttributeError
+    # get the correct env behavior 
+    # if type(env) == str:
+    #     env = gym.make(env, **env_kwargs)
+    #     if env_kwargs.get('sample_appliance', False):
+    #         assert 'random' in env_kwargs['model_path']
+    #     env = GymEnv(env)
+    #     # print(env.env.get_model_path())
+    # elif isinstance(env, GymEnv):
+    #     env = env
+    # elif callable(env):
+    #     env = env(**env_kwargs)
+    # else:
+    #     print("Unsupported environment format")
+    #     raise AttributeError
+
+    # if base_seed is not None:
+    #     env.set_seed(base_seed)
+    #     np.random.seed(base_seed)
+    # else:
+    #     np.random.seed()
 
     if base_seed is not None:
-        env.set_seed(base_seed)
         np.random.seed(base_seed)
-    else:
-        np.random.seed()
+    if type(env) == str:
+        # print(str(env))
+        env = gym.make(str(env), **env_kwargs)
+        # assert env.sample_appliance, str(env_kwargs)
+        env = GymEnv(env)
+    elif not isinstance(env, GymEnv):
+        env = GymEnv(env)
     horizon = min(horizon, env.horizon)
     paths = []
 
+    # if env_kwargs.get('sample_appliance', False):
+    #     assert 'random' in env.env.get_model_path(), str(env.env.get_model_path())
     for ep in range(num_traj):
         # seeding
         if base_seed is not None:
             seed = base_seed + ep
             env.set_seed(seed)
             np.random.seed(seed)
-
         observations=[]
         actions=[]
         rewards=[]
@@ -113,7 +129,6 @@ def sample_paths(
     num_cpu = 1 if num_cpu is None else num_cpu
     num_cpu = mp.cpu_count() if num_cpu == 'max' else num_cpu
     assert type(num_cpu) == int
-
     if num_cpu == 1:
         input_dict = dict(num_traj=num_traj, env=env, policy=policy,
                           eval_mode=eval_mode, horizon=horizon, base_seed=base_seed,
@@ -123,9 +138,19 @@ def sample_paths(
 
     # do multiprocessing otherwise
     paths_per_cpu = int(np.ceil(num_traj/num_cpu))
-    input_dict_list= []
+    input_dict_list = []
+    if isinstance(env, GymEnv):
+        env_id = env.env_id 
+    elif type(env) == str:
+        env_id = env
+    else:
+        env_id = env.spec.id
+    # env_kwargs['model_path'] = env.env.get_model_path() if isinstance(env, GymEnv) else env.get_model_path()
+    # env_kwargs['sample_layout'] = False
+    # env_kwargs['sample_appliance'] = False 
     for i in range(num_cpu):
-        input_dict = dict(num_traj=paths_per_cpu, env=env, policy=policy,
+        # NOTE: multi-procesing screws up the env creation, need to use env_id and re-create env in each thread
+        input_dict = dict(num_traj=paths_per_cpu, env=env_id, policy=policy,
                           eval_mode=eval_mode, horizon=horizon,
                           base_seed=base_seed + i * paths_per_cpu,
                           env_kwargs=env_kwargs)
@@ -133,7 +158,6 @@ def sample_paths(
     if suppress_print is False:
         start_time = timer.time()
         print("####### Gathering Samples #######")
-
     results = _try_multiprocess(do_rollout, input_dict_list,
                                 num_cpu, max_process_time, max_timeouts)
     paths = []

@@ -1,0 +1,58 @@
+default:
+    - override hydra/output: local
+    - override hydra/launcher: local
+
+# general inputs
+env_name          :   ???              # placeholder name
+env_seed          :   1
+env_kwargs        :
+    seed          :   ${env_seed}
+    sample_appliance: True 
+    sample_layout:    True 
+    augment_types:     []
+
+algorithm         :   NPG
+seed              :   1 
+sample_mode       :   trajectories
+rl_num_traj       :   200
+rl_num_samples    :   0                       # will be ignored when sample_mode=trajectories
+num_cpu           :   20
+rl_num_iter       :   501
+save_freq         :   50
+eval_rollouts     :   30
+exp_notes         :  "Sample config for kitchen tasks"
+stop_threshold    :   95
+partition: ''
+# RL parameters (all params related to PG, value function etc.)
+policy_size       :   (64, 64)
+init_log_std      :   -0.1
+min_log_std       :   -1.0
+vf_hidden_size    :   (128, 128)
+vf_batch_size     :   64
+vf_epochs         :   2
+vf_learn_rate     :   1e-3
+rl_step_size      :   0.05
+rl_gamma          :   0.995
+rl_gae            :   0.97
+
+# Algorithm hyperparameters : if alg requires additional params, can be specified here (or defaults will be used)
+
+alg_hyper_params  :   {'device': 'cpu'}
+run_path: ???
+log_wandb:  False 
+wandb_offline: False
+wandb_api_key: a8aa0f0ff39dea746470372239d8923414c2a179
+wandb:
+  name: ${job_name}
+  project: vil
+  group: mjrl 
+
+# general outputs
+job_name          :   "job"
+out_dir           :   mjrl_log_data
+hydra:
+    run:
+        dir: /proj/crv/mandizhao/${out_dir}/${env_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}/${wandb.name} #/checkpoint/${env:USER}/${out_dir}/${now:%Y-%m-%d}_${now:%H-%M-%S}/${wandb.name}
+    job:
+        name: npg
+        override_dirname: ${env_name}_envseed${env_seed}_agentseed${seed}

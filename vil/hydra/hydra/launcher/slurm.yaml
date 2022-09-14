@@ -1,0 +1,23 @@
+# @package _global_
+hydra:
+    launcher:
+        cpus_per_task: 20 
+        gpus_per_node: 1
+        tasks_per_node: 1
+        timeout_min: 720 # limit single run to 10hrs
+        mem_gb: 64
+        name: ${hydra.job.name}
+        partition: learnfair # learnlab # devlab learnfair
+        # array_parallelism: 256
+        _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
+        submitit_folder: ${hydra.sweep.dir}/.submitit/%j
+
+
+# Property	devlab	learnlab	learnfair	scavenge
+# Scheduling priority	1st	2nd	3rd	4th
+# Preemptable	No	Yes	Yes	Yes
+# Limit (per user)	cpu=320, gres/gpu=32, mem=2T	cpu=5120, gres/gpu=512, mem=32T	cpu=5120, gres/gpu=512, mem=32T	Unlimited
+# Cost (TRESBillingWeights)	cpu=1, mem=0.125G, gres/gpu=16	cpu=1, mem=0.125G, gres/gpu=16	cpu=1, mem=0.125G, gres/gpu=16	cpu=0, mem=0, gres/gpu=0
+# Default wall clock	5mins	5mins	5mins	5mins
+# Max wall clock	72hrs	72hrs	72hrs	72hrs
+
